@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pixel Racer — Upgraded</title>
+  <style>
+    :root{--bg:#081226;--panel:#0b1220;--accent:#ffd166;--muted:#9fb0c8}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system,'Segoe UI',Roboto,Arial;color:#e6eef6;background:var(--bg)}
+    .wrap{max-width:1100px;margin:18px auto;padding:16px;display:grid;grid-template-columns:1fr 370px;gap:16px}
+    .card{background:linear-gradient(180deg,#071022,#04101a);border:1px solid rgba(255,255,255,0.03);padding:12px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+    canvas{width:100%;height:auto;display:block;border-radius:8px;background:#091427}
+    h1{margin:4px 0 8px;font-size:18px}
+    .controls{display:flex;gap:8px;margin-top:8px}
+    button{background:var(--accent);border:none;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .small{font-size:13px;color:var(--muted)}
+    .upgrades{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+    .upgrade{display:flex;justify-content:space-between;align-items:center;padding:8px;background:rgba(255,255,255,0.02);border-radius:8px}
+    .menu{display:flex;flex-direction:column;gap:8px}
+    .menu button{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:12px;border-radius:10px;color:#dbeeff;text-align:left}
+    .menu .active{border-color:var(--accent);box-shadow:0 6px 20px rgba(255,209,102,0.06)}
+    .garage-list{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+    .car-card{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;background:rgba(255,255,255,0.02)}
+    .stat{font-weight:700}
+    footer{grid-column:1/-1;color:var(--muted);font-size:13px;margin-top:12px}
+    .hud{position:absolute;left:24px;top:18px;color:#cfe9ff;font-family:monospace}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" style="position:relative;overflow:hidden">
+      <h1>Pixel Racer — Upgraded Demo</h1>
+      <canvas id="game" width="960" height="540"></canvas>
+      <div class="controls">
+        <button id="btnMenu">Menu</button>
+        <button id="btnGarage">Garage</button>
+        <button id="btnRace">Quick Race</button>
+        <div style="flex:1"></div>
+        <div class="small hud">Coins: <span id="coins">0</span></div>
+      </div>
+      <p class="small">Controls: Keyboard: <strong>Space</strong> accelerate / nitro, <strong>A/D</strong> steer (cosmetic), <strong>Enter</strong> start. Save/load uses localStorage. Embed via iframe.</p>
+    </div>
+
+    <div class="card">
+      <div id="uiArea"></div>
+    </div>
+
+    <footer class="card">
+      <strong>Embed</strong> — Host the file and embed with:
+      <pre style="background:#071021;padding:8px;border-radius:6px;color:#cfe9ff;overflow:auto">&lt;iframe src="https://USERNAME.github.io/REPO/index.html" width="100%" height="700" style="border:none;&gt;&lt;/iframe&gt;</pre>
+    </footer>
+  </div>
+
+<script>
+// -----------------------------
+// Pixel Racer — Upgraded Single-file Game
+// Features: Menu system, Garage, Quick Race, Multiple cars, upgrades, save
+// -----------------------------
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = false;
+const uiArea = document.getElementById('uiArea');
+const coinsEl = document.getElementById('coins');
+const SAVE_KEY = 'pixel_racer_upgraded_v1';
+
+// ----- Game state -----
+let state = {
+  coins: 250,
+  selectedCar: 'rally',
+  cars: {
+    rally: {name:'Rally', color:'#4af', owned:true},
+    slick: {name:'Slick GT', color:'#c84', owned:false, price:500},
+    drift: {name:'Drifter', color:'#6fa', owned:false, price:750}
+  },
+  upgrades: { engine:1, turbo:0, tires:1, nitro:0 },
+  garage: {},
+  mode: 'menu'
+};
+
+// ----- Car templates -----
+const CAR_TEMPLATES = {
+  rally: {accel:1.0, top:150, grip:1.0},
+  slick: {accel:0.9, top:180, grip:0.95},
+  drift: {accel:1.05, top:140, grip:1.1}
+};
+
+// ----- UI / Menus -----
+function buildUI(){
+  uiArea.innerHTML = '';
+  const menu = document.createElement('div'); menu.className='menu';
+  // Header
+  const hdr = document.createElement('div'); hdr.style.display='flex'; hdr.style.justifyContent='space-between'; hdr.style.alignItems='center';
+  hdr.innerHTML = `<strong>Garage</strong><span class="small">Level: ${getCarLevel()}</span>`;
+  uiArea.appendChild(hdr);
+
+  // Car selector / garage
+  const garageBox = document.createElement('div'); garageBox.className='garage-list';
+  for(const key of Object.keys(state.cars)){
+    const c = state.cars[key];
+    const card = document.createElement('div'); card.className='car-card';
+    card.innerHTML = `<div style="width:120px;height:60px;background:linear-gradient(180deg,#0b1220,#071022);border-radius:6px;display:flex;align-items:center;justify-content:center"><canvas data-canvas="${key}" width="120" height="60" style="image-rendering:pixelated"></canvas></div>
+      <div style="flex:1"><div style="font-weight:700">${c.name}</div><div class="small">${c.owned? 'Owned' : 'Price: ' + (c.price||0) + ' coins'}</div></div>
+      <div style="text-align:right"><button data-select="${key}">${state.selectedCar===key? 'Selected':'Select'}</button>
+      ${c.owned? '<button data-start="'+key+'">Start</button>':'<button data-buy="'+key+'">Buy</button>'}
+      </div>`;
+    garageBox.appendChild(card);
+  }
+  uiArea.appendChild(garageBox);
+
+  // Upgrades
+  const upgradesBox = document.createElement('div'); upgradesBox.style.marginTop='12px';
+  upgradesBox.innerHTML = '<strong>Upgrades</strong>';
+  const upList = document.createElement('div'); upList.className='upgrades';
+  const defs = {engine:{name:'Engine', base:100}, turbo:{name:'Turbo', base:150}, tires:{name:'Tires', base:80}, nitro:{name:'Nitro', base:180}};
+  for(const k in defs){
+    const lvl = state.upgrades[k]||0;
+    const cost = Math.round(defs[k].base * Math.pow(1.8, lvl));
+    const row = document.createElement('div'); row.className='upgrade';
+    row.innerHTML = `<div><div style="font-weight:700">${defs[k].name} <span class="small">(lvl ${lvl})</span></div><div class="small">${k==='nitro'? 'Boost seconds':'Improves '+(k==='tires'?'traction':'accel/top')}</div></div>
+      <div style="text-align:right"><div class="small">Cost: ${cost}</div><button data-buyup="${k}">Buy</button></div>`;
+    upList.appendChild(row);
+  }
+  upgradesBox.appendChild(upList);
+  uiArea.appendChild(upgradesBox);
+
+  // Controls (keyboard instructions)
+  const ctrl = document.createElement('div'); ctrl.style.marginTop='12px'; ctrl.innerHTML = '<div class="small">Controls: Space = Accelerate / Nitro, A/D = steer (cosmetic), Enter = Start Race</div>';
+  uiArea.appendChild(ctrl);
+
+  // wire up buttons
+  uiArea.querySelectorAll('button[data-select]').forEach(b=>b.onclick = ()=>{ state.selectedCar = b.getAttribute('data-select'); save(); buildUI(); });
+  uiArea.querySelectorAll('button[data-buy]').forEach(b=>{ b.onclick = ()=>{ const k=b.getAttribute('data-buy'); buyCar(k); } });
+  uiArea.querySelectorAll('button[data-start]').forEach(b=>{ b.onclick = ()=>{ startRace({mode:'quick'}); } });
+  uiArea.querySelectorAll('button[data-buyup]').forEach(b=>{ b.onclick = ()=>{ const k=b.getAttribute('data-buyup'); buyUpgrade(k); } });
+
+  // render tiny car previews on canvases
+  uiArea.querySelectorAll('canvas[data-canvas]').forEach(cv=>{ const key = cv.getAttribute('data-canvas'); const g = cv.getContext('2d'); g.imageSmoothingEnabled=false; renderSmallCar(g,cv.width,cv.height, state.cars[key].color||CAR_TEMPLATES[key].color || '#fff'); });
+
+  coinsEl.textContent = state.coins;
+}
+
+function getCarLevel(){ return Math.floor((state.upgrades.engine + state.upgrades.tires + state.upgrades.turbo + state.upgrades.nitro)/2)+1 }
+
+function buyCar(key){ const c = state.cars[key]; if(state.coins >= (c.price||0)){ state.coins -= c.price; c.owned = true; state.selectedCar = key; save(); buildUI(); } else alert('Not enough coins'); }
+function buyUpgrade(key){ const defs = {engine:100,turbo:150,tires:80,nitro:180}; const lvl = state.upgrades[key]||0; const cost = Math.round(defs[key]*Math.pow(1.8,lvl)); if(state.coins < cost) return alert('Not enough coins'); state.coins -= cost; state.upgrades[key]=lvl+1; save(); buildUI(); }
+
+// ----- Persistence -----
+function load(){ try{ const raw = localStorage.getItem(SAVE_KEY); if(raw){ const s = JSON.parse(raw); state = Object.assign(state, s); } }catch(e){} }
+function save(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }catch(e){} }
+
+// ----- Rendering helpers -----
+function renderSmallCar(g,w,h,color){ g.clearRect(0,0,w,h); g.fillStyle='#081827'; g.fillRect(0,0,w,h); // background
+  g.fillStyle=color; g.fillRect(14,18,92,18); g.fillRect(28,8,56,10); g.fillStyle='#000'; g.fillRect(22,34,18,8); g.fillRect(76,34,18,8); g.fillStyle='#aee'; g.fillRect(44,10,24,6); }
+
+// ----- Race simulation -----
+let race = null;
+function computeStatsForSelected(){ const tpl = CAR_TEMPLATES[state.selectedCar]; const u = state.upgrades; let accel = tpl.accel * (1 + u.engine*0.15 + u.nitro*0.03); let top = tpl.top + u.turbo*12 + u.engine*6 + u.nitro*3; let grip = tpl.grip * (1 + u.tires*0.12); return {accel:accel, top:top, grip:grip, nitro:u.nitro}; }
+
+function startRace(opts={mode:'quick'}){
+  if(race) return; // already running
+  state.mode = 'race'; save();
+  const stats = computeStatsForSelected();
+  race = {distance:800, pos:0, speed:0, t:0, finished:false, boost:stats.nitro*2, playerColor: state.cars[state.selectedCar].color||'#4af', opponentColor:'#c84', stats};
+  // opponent scaled
+  race.opponent = {pos:0,speed:0,skill:0.9 + Math.random()*0.2};
+  loop();
+}
+
+function endRace(win){ race = null; state.coins += win? Math.round(100 + Math.random()*120 + getCarLevel()*20) : Math.round(20 + Math.random()*30); save(); buildUI(); }
+
+// input
+const input = {acc:false,left:false,right:false,start:false};
+window.addEventListener('keydown', (e)=>{ if(e.code==='Space'){ input.acc=true; e.preventDefault(); } if(e.key==='a' || e.key==='A') input.left=true; if(e.key==='d' || e.key==='D') input.right=true; if(e.key==='Enter') { if(!race) startRace(); } });
+window.addEventListener('keyup',(e)=>{ if(e.code==='Space'){ input.acc=false; } if(e.key==='a' || e.key==='A') input.left=false; if(e.key==='d' || e.key==='D') input.right=false; });
+
+// draw loop
+function loop(){ if(!race) { drawMenu(); return; }
+  const dt = 1/60;
+  race.t += dt;
+  // player accel
+  if(input.acc){ race.speed += race.stats.accel * dt * 120; } else { race.speed += race.stats.accel * 0.3 * dt * 120; }
+  // cap
+  const cap = race.stats.top + (input.acc && race.boost>0 ? 60 : 0);
+  if(race.speed > cap) race.speed = race.speed - (race.speed-cap)*0.2;
+  race.speed *= 0.996;
+  race.pos += race.speed * dt;
+  // handle boost use
+  if(input.acc && race.boost>0 && race.speed > race.stats.top*0.7){ race.boost -= dt*1; }
+
+  // opponent simple AI
+  const oppAcc = race.opponent.skill * (1 + Math.sin(race.t*1.5)*0.04);
+  race.opponent.speed += oppAcc * dt * 110;
+  const oppCap = race.stats.top * (0.95 + Math.random()*0.08);
+  if(race.opponent.speed > oppCap) race.opponent.speed = race.opponent.speed - (race.opponent.speed-oppCap)*0.2;
+  race.opponent.speed *= 0.995; race.opponent.pos += race.opponent.speed * dt;
+
+  if(race.pos >= race.distance || race.opponent.pos >= race.distance){ race.finished=true; const win = race.pos >= race.opponent.pos; endRace(win); }
+  drawRace(); requestAnimationFrame(loop);
+}
+
+function drawMenu(){ // idle background + small car preview
+  ctx.fillStyle='#081828'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  // checker track tiles
+  for(let x=0;x<canvas.width;x+=16){ for(let y=0;y<canvas.height;y+=16){ ctx.fillStyle = ((x+y)%32===0)? '#10263f' : '#0b2b46'; ctx.fillRect(x,y,16,16); }}
+  // big title
+  ctx.fillStyle='#fff'; ctx.font='bold 32px monospace'; ctx.fillText('Pixel Racer — Garage',28,54);
+  // draw selected car
+  const stats = computeStatsForSelected();
+  drawPixelCar(420,260,1.6,state.cars[state.selectedCar].color||'#4af');
+  // draw stats
+  ctx.fillStyle='#cfe9ff'; ctx.font='16px monospace'; ctx.fillText('Top: '+Math.round(stats.top)+' km/h',28,100); ctx.fillText('Accel: '+stats.accel.toFixed(2),28,124); ctx.fillText('Grip: '+stats.grip.toFixed(2),28,148);
+}
+
+function drawRace(){ // background
+  ctx.fillStyle='#081827'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  // city skyline
+  ctx.fillStyle='#06233a'; ctx.fillRect(0,0,canvas.width,120);
+  for(let x=0;x<canvas.width;x+=32){ ctx.fillStyle = '#033'; ctx.fillRect(x+8,40 + ((x/32)%3)*6,16,80); }
+  // road
+  ctx.fillStyle='#1b2b3b'; ctx.fillRect(0,180,canvas.width,220);
+  // lane markings
+  ctx.fillStyle='#fff'; for(let x=0;x<canvas.width;x+=60){ ctx.fillRect(x+20,280,30,6); }
+  // finish line (right)
+  const finishX = canvas.width - 120;
+  ctx.fillStyle='#fff'; ctx.fillRect(finishX,200,6,200);
+
+  // opponent and player positions mapped to screen
+  const px = 120 + (canvas.width - 260) * (Math.min(race.pos, race.distance)/race.distance);
+  const ox = 120 + (canvas.width - 260) * (Math.min(race.opponent.pos, race.distance)/race.distance);
+  drawPixelCar(ox,320,1.0,race.opponentColor);
+  drawPixelCar(px,360,1.1,race.playerColor);
+
+  // HUD
+  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(12,12,260,88);
+  ctx.fillStyle='#cfe9ff'; ctx.font='16px monospace'; ctx.fillText('Speed: '+Math.round(race.speed)+' km/h',20,36);
+  ctx.fillText('Distance left: '+Math.max(0,Math.round(race.distance - race.pos))+' m',20,60);
+  ctx.fillText('Opponent: '+Math.round(race.opponent.pos)+' m',20,84);
+  // nitro bar
+  ctx.fillStyle='#222'; ctx.fillRect(12,100,200,8); ctx.fillStyle='#ffd166'; ctx.fillRect(12,100,Math.max(0, (race.boost/(state.upgrades.nitro*2||1))) * 200,8);
+}
+
+function drawPixelCar(x,y,scale,color){ const s = 5*scale; ctx.save(); ctx.translate(x,y); ctx.scale(1,1);
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(-28*s,12*s,56*s,8*s);
+  // body
+  ctx.fillStyle=color; ctx.fillRect(-24*s,-8*s,48*s,12*s); ctx.fillRect(-14*s,-16*s,28*s,8*s);
+  // wheels
+  ctx.fillStyle='#000'; ctx.fillRect(-18*s,6*s,10*s,8*s); ctx.fillRect(8*s,6*s,10*s,8*s);
+  // windows
+  ctx.fillStyle='#bfe'; ctx.fillRect(-6*s,-14*s,12*s,5*s);
+  ctx.restore(); }
+
+// ----- init -----
+load(); buildUI(); drawMenu();
+
+// expose some helpers in console
+window.PR = {state, save, load, startRace};
+
+</script>
+</body>
+</html>
